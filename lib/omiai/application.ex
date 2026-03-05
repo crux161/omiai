@@ -8,6 +8,7 @@ defmodule Omiai.Application do
     children = [
       OmiaiWeb.Telemetry,
       {Phoenix.PubSub, name: Omiai.PubSub},
+      OmiaiWeb.QuicdialRegistry,
       OmiaiWeb.Presence,
       OmiaiWeb.Endpoint
     ]

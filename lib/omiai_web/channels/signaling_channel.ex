@@ -4,6 +4,7 @@ defmodule OmiaiWeb.SignalingChannel do
   require Logger
 
   alias OmiaiWeb.Presence
+  alias OmiaiWeb.QuicdialRegistry
 
   @canonical_events ~w(sdp_offer sdp_answer ice_candidate)
   @legacy_to_canonical %{
@@ -23,10 +24,19 @@ defmodule OmiaiWeb.SignalingChannel do
   def join(
         "peer:" <> requested_public_key,
         _payload,
-        %Phoenix.Socket{assigns: %{public_key: authed_public_key, event_contract: event_contract}} =
-          socket
+        %Phoenix.Socket{
+          assigns: %{
+            public_key: authed_public_key,
+            event_contract: event_contract,
+            peer_ip: peer_ip
+          }
+        } = socket
       ) do
     if requested_public_key == authed_public_key do
+      if is_binary(peer_ip) and peer_ip != "" and peer_ip != "unknown" do
+        QuicdialRegistry.register(authed_public_key, peer_ip, self())
+      end
+
       {:ok, _meta} =
         Presence.track(socket, authed_public_key, %{
           online_at: System.system_time(:second),
@@ -50,6 +60,44 @@ defmodule OmiaiWeb.SignalingChannel do
 
   @impl true
   def join(_topic, _payload, _socket), do: {:error, %{reason: "invalid_topic"}}
+
+  @impl true
+  def handle_in("resolve_quicdial", %{"code" => target_code}, socket) do
+    case normalize_public_key(target_code) do
+      nil ->
+        Logger.warning(
+          "resolve_quicdial_rejected from=#{socket.assigns.public_key} reason=missing_code"
+        )
+
+        {:reply, {:error, %{"reason" => "missing_code"}}, socket}
+
+      normalized_code ->
+        case QuicdialRegistry.resolve(normalized_code) do
+          {:ok, resolved_ip} ->
+            Logger.info(
+              "resolve_quicdial_ok from=#{socket.assigns.public_key} code=#{normalized_code} ip=#{resolved_ip}"
+            )
+
+            {:reply, {:ok, %{ip: resolved_ip}}, socket}
+
+          :error ->
+            Logger.info(
+              "resolve_quicdial_miss from=#{socket.assigns.public_key} code=#{normalized_code}"
+            )
+
+            {:reply, {:error, %{"reason" => "offline"}}, socket}
+        end
+    end
+  end
+
+  @impl true
+  def handle_in("resolve_quicdial", _payload, socket) do
+    Logger.warning(
+      "resolve_quicdial_rejected from=#{socket.assigns.public_key} reason=invalid_payload"
+    )
+
+    {:reply, {:error, %{"reason" => "invalid_payload"}}, socket}
+  end
 
   @impl true
   def handle_in(event, payload, socket) when event in @routing_events do

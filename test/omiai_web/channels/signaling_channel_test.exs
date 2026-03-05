@@ -137,6 +137,23 @@ defmodule OmiaiWeb.SignalingChannelTest do
     assert_reply ref, :error, %{"reason" => "missing_to"}
   end
 
+  test "resolve_quicdial returns target ip while target is connected" do
+    {:ok, _target} = connect_and_join("resolve_target", "dual", peer_ip: {10, 24, 8, 88})
+    {:ok, requester} = connect_and_join("resolve_requester", "dual", peer_ip: {127, 0, 0, 1})
+
+    ref = push(requester, "resolve_quicdial", %{"code" => "resolve_target"})
+
+    assert_reply ref, :ok, %{ip: "10.24.8.88"}
+  end
+
+  test "resolve_quicdial fast-fails when target is offline" do
+    {:ok, requester} = connect_and_join("resolve_requester_offline", "dual")
+
+    ref = push(requester, "resolve_quicdial", %{"code" => "resolve_missing"})
+
+    assert_reply ref, :error, %{"reason" => "offline"}
+  end
+
   test "presence metadata is tracked on join and removed on disconnect" do
     Process.flag(:trap_exit, true)
 
@@ -161,9 +178,17 @@ defmodule OmiaiWeb.SignalingChannelTest do
     assert_presence_cleared("peer:presence_peer")
   end
 
-  defp connect_and_join(public_key, contract) do
+  defp connect_and_join(public_key, contract, opts \\ []) do
+    peer_ip = Keyword.get(opts, :peer_ip, {127, 0, 0, 1})
+    peer_port = Keyword.get(opts, :peer_port, 40_000)
+    connect_info = %{peer_data: %{address: peer_ip, port: peer_port}}
+
     assert {:ok, socket} =
-             connect(SankakuSocket, %{"public_key" => public_key, "event_contract" => contract})
+             connect(
+               SankakuSocket,
+               %{"public_key" => public_key, "event_contract" => contract},
+               connect_info: connect_info
+             )
 
     assert {:ok, _reply, channel_socket} =
              subscribe_and_join(socket, SignalingChannel, "peer:" <> public_key)
