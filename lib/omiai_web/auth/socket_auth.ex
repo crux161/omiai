@@ -1,80 +1,166 @@
 defmodule OmiaiWeb.Auth.SocketAuth do
   @moduledoc """
-  Authentication stub for websocket signaling clients.
+  Authentication for multi-device WebRTC signaling connections.
 
-  NOTE: This module currently validates shape/required fields only.
-  The cryptographic ownership verification is intentionally stubbed and should
-  be implemented where noted in `authenticate/2`.
+  Supports (in priority order):
+  - Token auth: auth_token + device_uuid (logged-in user)
+  - Pairing auth: pairing_token + device_uuid (QR code flow)
+  - Direct auth: quicdial_id/public_key + device_uuid (LAN fallback)
   """
 
-  @valid_event_contracts ~w(sdp legacy dual)
+  alias Omiai.Accounts
+  alias OmiaiWeb.PairingTokenCache
 
-  @type auth_reason :: :missing_public_key | :invalid_public_key | :invalid_event_contract
+  @valid_quicdial_pattern ~r/^[A-Za-z0-9_:\-\.\/=+]{3,512}$/
+  @valid_device_uuid_pattern ~r/^[A-Za-z0-9\-]{8,64}$/
+
+  @type auth_reason ::
+          :missing_quicdial_id
+          | :missing_device_uuid
+          | :invalid_quicdial_id
+          | :invalid_device_uuid
+          | :invalid_pairing_token
+          | :pairing_token_expired
+          | :invalid_auth_token
 
   @spec authenticate(map(), map() | nil) ::
-          {:ok,
-           %{
-             public_key: String.t(),
-             event_contract: String.t(),
-             session_token: String.t() | nil,
-             signature: String.t() | nil,
-             sig_ts: String.t() | nil,
-             sig_nonce: String.t() | nil,
-             client_meta: map()
-           }}
+          {:ok, %{quicdial_id: String.t(), device_uuid: String.t(), client_meta: map()}}
           | {:error, auth_reason()}
   def authenticate(params, connect_info) when is_map(params) do
-    with {:ok, public_key} <- fetch_public_key(params),
-         {:ok, event_contract} <- normalize_event_contract(Map.get(params, "event_contract")) do
+    cond do
+      # Token flow: auth_token (logged-in user via Omiai account)
+      Map.has_key?(params, "auth_token") or Map.has_key?(params, :auth_token) ->
+        authenticate_token(params, connect_info)
+
+      # Pairing flow: pairing_token + device_uuid
+      Map.has_key?(params, "pairing_token") or Map.has_key?(params, :pairing_token) ->
+        authenticate_pairing(params, connect_info)
+
+      # Direct flow: quicdial_id / public_key + device_uuid (LAN fallback)
+      true ->
+        authenticate_direct(params, connect_info)
+    end
+  end
+
+  def authenticate(_params, _connect_info), do: {:error, :missing_quicdial_id}
+
+  defp authenticate_token(params, connect_info) do
+    token = optional_string(params["auth_token"] || params[:auth_token])
+
+    case Accounts.verify_session_token(token || "") do
+      {:ok, %{user_id: user_id, quicdial_id: quicdial_id}} ->
+        {:ok, device_uuid} = fetch_device_uuid(params)
+
+        claims = %{
+          quicdial_id: quicdial_id,
+          device_uuid: device_uuid,
+          user_id: user_id,
+          client_meta: extract_client_meta(connect_info || %{})
+        }
+
+        {:ok, claims}
+
+      {:error, _reason} ->
+        {:error, :invalid_auth_token}
+    end
+  end
+
+  defp authenticate_direct(params, connect_info) do
+    with {:ok, quicdial_id} <- fetch_quicdial_id(params),
+         {:ok, device_uuid} <- fetch_device_uuid(params) do
       claims = %{
-        public_key: public_key,
-        event_contract: event_contract,
-        session_token: optional_string(Map.get(params, "session_token")),
-        signature: optional_string(Map.get(params, "signature")),
-        sig_ts: optional_string(Map.get(params, "sig_ts")),
-        sig_nonce: optional_string(Map.get(params, "sig_nonce")),
+        quicdial_id: quicdial_id,
+        device_uuid: device_uuid,
         client_meta: extract_client_meta(connect_info || %{})
       }
 
-      # TODO(crypto-verification): verify `signature` ownership proof using
-      # canonical message {public_key, session_token, sig_ts, sig_nonce}.
-      # Reject replayed requests by validating timestamp window and nonce reuse,
-      # and reject if signature public key does not match requested `public_key`.
       {:ok, claims}
     end
   end
 
-  def authenticate(_params, _connect_info), do: {:error, :missing_public_key}
+  defp authenticate_pairing(params, connect_info) do
+    with {:ok, token} <- fetch_pairing_token(params),
+         {:ok, device_uuid} <- fetch_device_uuid(params),
+         {:ok, quicdial_id} <- PairingTokenCache.validate(token) do
+      claims = %{
+        quicdial_id: quicdial_id,
+        device_uuid: device_uuid,
+        client_meta: extract_client_meta(connect_info || %{})
+      }
 
-  defp fetch_public_key(params) do
-    value = params |> Map.get("public_key") |> optional_string()
+      {:ok, claims}
+    else
+      {:error, :invalid} -> {:error, :invalid_pairing_token}
+      {:error, :expired} -> {:error, :pairing_token_expired}
+      other -> other
+    end
+  end
+
+  defp fetch_quicdial_id(params) do
+    value =
+      optional_string(
+        params["quicdial_id"] || params[:quicdial_id] ||
+          params["public_key"] || params[:public_key]
+      )
 
     cond do
-      is_nil(value) ->
-        {:error, :missing_public_key}
+      is_nil(value) or value == "" -> {:error, :missing_quicdial_id}
+      Regex.match?(@valid_quicdial_pattern, value) -> {:ok, value}
+      true -> {:error, :invalid_quicdial_id}
+    end
+  end
 
-      valid_public_key?(value) ->
+  defp fetch_device_uuid(params) do
+    value = optional_string(params["device_uuid"] || params[:device_uuid])
+
+    cond do
+      is_nil(value) or value == "" ->
+        # Auto-generate a stable device_uuid from the session when not provided
+        # (desktop clients may omit device_uuid)
+        generate_device_uuid(params)
+
+      Regex.match?(@valid_device_uuid_pattern, value) ->
         {:ok, value}
 
       true ->
-        {:error, :invalid_public_key}
+        {:error, :invalid_device_uuid}
     end
   end
 
-  defp normalize_event_contract(nil), do: {:ok, "dual"}
+  defp generate_device_uuid(params) do
+    # Derive a stable UUID from session_token if available, otherwise generate one.
+    # This ensures the same client session gets the same device_uuid across reconnects.
+    seed =
+      optional_string(params["session_token"] || params[:session_token]) ||
+        optional_string(params["sig_nonce"] || params[:sig_nonce])
 
-  defp normalize_event_contract(value) do
-    normalized = value |> to_string() |> String.trim() |> String.downcase()
+    uuid =
+      if seed do
+        :crypto.hash(:sha256, seed)
+        |> Base.encode16(case: :lower)
+        |> binary_part(0, 32)
+        |> format_as_uuid()
+      else
+        :crypto.strong_rand_bytes(16)
+        |> Base.encode16(case: :lower)
+        |> format_as_uuid()
+      end
 
-    if normalized in @valid_event_contracts do
-      {:ok, normalized}
+    {:ok, uuid}
+  end
+
+  defp format_as_uuid(<<a::binary-size(8), b::binary-size(4), c::binary-size(4), d::binary-size(4), e::binary-size(12)>>) do
+    "#{a}-#{b}-#{c}-#{d}-#{e}"
+  end
+
+  defp fetch_pairing_token(params) do
+    value = optional_string(params["pairing_token"] || params[:pairing_token])
+
+    if is_nil(value) or value == "" do
+      {:error, :invalid_pairing_token}
     else
-      {:error, :invalid_event_contract}
+      {:ok, value}
     end
-  end
-
-  defp valid_public_key?(key) do
-    Regex.match?(~r/^[A-Za-z0-9_:\-\.\/=+]{3,512}$/, key)
   end
 
   defp optional_string(nil), do: nil

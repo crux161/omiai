@@ -1,4 +1,13 @@
 defmodule OmiaiWeb.SankakuSocket do
+  @moduledoc """
+  Multi-device WebRTC/QUIC signaling socket.
+
+  Accepts connections with:
+  - auth_token + device_uuid (logged-in Omiai user)
+  - pairing_token + device_uuid (QR code pairing)
+  - quicdial_id/public_key + device_uuid (LAN fallback)
+  """
+
   use Phoenix.Socket
 
   require Logger
@@ -6,7 +15,9 @@ defmodule OmiaiWeb.SankakuSocket do
   alias OmiaiWeb.Auth.SocketAuth
   alias OmiaiWeb.QuicdialRegistry
 
+  channel "user:*", OmiaiWeb.SignalingChannel
   channel "peer:*", OmiaiWeb.SignalingChannel
+  channel "lobby:*", OmiaiWeb.LobbyChannel
 
   @impl true
   def connect(params, socket, connect_info) do
@@ -15,18 +26,19 @@ defmodule OmiaiWeb.SankakuSocket do
         ip = extract_peer_ip(connect_info) || claims.client_meta[:ip] || "unknown"
         client_meta = Map.put(claims.client_meta, :ip, ip)
 
-        maybe_register_quicdial(claims.public_key, ip)
+        maybe_register_quicdial(claims.quicdial_id, ip)
 
         Logger.info(
-          "socket_connected public_key=#{claims.public_key} contract=#{claims.event_contract} ip=#{ip}"
+          "socket_connected quicdial_id=#{claims.quicdial_id} device_uuid=#{claims.device_uuid} ip=#{ip}"
         )
 
         authed_socket =
           socket
-          |> assign(:public_key, claims.public_key)
-          |> assign(:event_contract, claims.event_contract)
+          |> assign(:quicdial_id, claims.quicdial_id)
+          |> assign(:device_uuid, claims.device_uuid)
           |> assign(:peer_ip, ip)
           |> assign(:client_meta, client_meta)
+          |> assign(:user_id, Map.get(claims, :user_id))
 
         {:ok, authed_socket}
 
@@ -37,12 +49,14 @@ defmodule OmiaiWeb.SankakuSocket do
   end
 
   @impl true
-  def id(%Phoenix.Socket{assigns: %{public_key: public_key}}), do: "peer:" <> public_key
+  def id(%Phoenix.Socket{assigns: %{quicdial_id: quicdial_id, device_uuid: device_uuid}}) do
+    "user:#{quicdial_id}:#{device_uuid}"
+  end
 
-  defp maybe_register_quicdial(_public_key, "unknown"), do: :ok
+  defp maybe_register_quicdial(_quicdial_id, "unknown"), do: :ok
 
-  defp maybe_register_quicdial(public_key, ip),
-    do: QuicdialRegistry.register(public_key, ip, self())
+  defp maybe_register_quicdial(quicdial_id, ip),
+    do: QuicdialRegistry.register(quicdial_id, ip, self())
 
   defp extract_peer_ip(connect_info) when is_map(connect_info) do
     peer_data = Map.get(connect_info, :peer_data) || Map.get(connect_info, "peer_data") || %{}

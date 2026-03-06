@@ -3,7 +3,7 @@ defmodule OmiaiWeb.Endpoint do
 
   socket "/ws/sankaku", OmiaiWeb.SankakuSocket,
     websocket: [
-      connect_info: [peer_data: true, x_headers: ["user-agent"], uri: true]
+      connect_info: [:peer_data, :uri, {:x_headers, ["user-agent"]}]
     ]
 
   plug Plug.Static,
@@ -19,6 +19,9 @@ defmodule OmiaiWeb.Endpoint do
 
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+
+  # CORS: handle preflight OPTIONS and add headers to all responses
+  plug OmiaiWeb.Plugs.Cors
 
   plug OmiaiWeb.Plugs.SankakuHandshakeAuth
 

@@ -6,18 +6,23 @@ defmodule OmiaiWeb.SignalingChannelTest do
 
   @endpoint OmiaiWeb.Endpoint
 
-  test "sdp_offer routes canonical event for dual recipient" do
-    {:ok, _bob} = connect_and_join("bob_key", "dual")
-    {:ok, alice} = connect_and_join("alice_key", "dual")
+  test "sdp_offer broadcasts to all devices (simultaneous ringing)" do
+    {:ok, _bob} = connect_and_join("bob_key", "bob-device-1")
+    {:ok, alice} = connect_and_join("alice_key", "alice-device-1")
 
     ref =
-      push(alice, "sdp_offer", %{"to" => "bob_key", "call_id" => "call_1", "sdp" => "REDACTED"})
+      push(alice, "sdp_offer", %{
+        "to_quicdial_id" => "bob_key",
+        "call_id" => "call_1",
+        "sdp" => "REDACTED"
+      })
 
-    assert_reply ref, :ok, %{"delivered" => true, "event" => "sdp_offer", "to" => "bob_key"}
+    assert_reply ref, :ok, %{"delivered" => true}
 
     assert_broadcast "sdp_offer", %{
-      "to" => "bob_key",
-      "from" => "alice_key",
+      "to_quicdial_id" => "bob_key",
+      "from_quicdial_id" => "alice_key",
+      "from_device_uuid" => "alice-device-1",
       "call_id" => "call_1",
       "sent_at" => sent_at
     }
@@ -25,142 +30,137 @@ defmodule OmiaiWeb.SignalingChannelTest do
     assert is_integer(sent_at)
   end
 
-  test "sdp_offer routes legacy event for legacy recipient" do
-    {:ok, _bob} = connect_and_join("bob_legacy", "legacy")
-    {:ok, alice} = connect_and_join("alice_dual", "dual")
+  test "sdp_offer fast-fails when target is offline" do
+    {:ok, alice} = connect_and_join("alice_offline", "alice-dev-1")
 
-    ref = push(alice, "sdp_offer", %{"to" => "bob_legacy", "sdp" => "REDACTED"})
-
-    assert_reply ref, :ok, %{"delivered" => true, "event" => "offer", "to" => "bob_legacy"}
-
-    assert_broadcast "offer", %{
-      "to" => "bob_legacy",
-      "from" => "alice_dual",
-      "sent_at" => sent_at
-    }
-
-    assert is_integer(sent_at)
-  end
-
-  test "legacy offer input normalizes to canonical recipient event" do
-    {:ok, _bob} = connect_and_join("bob_sdp", "sdp")
-    {:ok, alice} = connect_and_join("alice_legacy_sender", "dual")
-
-    ref = push(alice, "offer", %{"to" => "bob_sdp", "sdp" => "REDACTED"})
-
-    assert_reply ref, :ok, %{"delivered" => true, "event" => "sdp_offer", "to" => "bob_sdp"}
-
-    assert_broadcast "sdp_offer", %{
-      "to" => "bob_sdp",
-      "from" => "alice_legacy_sender",
-      "sent_at" => sent_at
-    }
-
-    assert is_integer(sent_at)
-  end
-
-  test "ice routing supports legacy and canonical names" do
-    {:ok, _bob_legacy} = connect_and_join("bob_legacy_ice", "legacy")
-    {:ok, alice} = connect_and_join("alice_ice", "dual")
-
-    ref = push(alice, "ice_candidate", %{"to" => "bob_legacy_ice", "candidate" => "candidate:1"})
-
-    assert_reply ref, :ok, %{"delivered" => true, "event" => "ice", "to" => "bob_legacy_ice"}
-
-    assert_broadcast "ice", %{
-      "to" => "bob_legacy_ice",
-      "from" => "alice_ice",
-      "sent_at" => sent_at
-    }
-
-    assert is_integer(sent_at)
-
-    {:ok, _bob_dual} = connect_and_join("bob_dual_ice", "dual")
-
-    ref2 = push(alice, "ice", %{"to" => "bob_dual_ice", "candidate" => "candidate:2"})
-
-    assert_reply ref2, :ok, %{
-      "delivered" => true,
-      "event" => "ice_candidate",
-      "to" => "bob_dual_ice"
-    }
-
-    assert_broadcast "ice_candidate", %{
-      "to" => "bob_dual_ice",
-      "from" => "alice_ice",
-      "sent_at" => sent_at_2
-    }
-
-    assert is_integer(sent_at_2)
-  end
-
-  test "friend?call fast-fails when peer is offline" do
-    {:ok, alice} = connect_and_join("alice_call", "dual")
-
-    ref = push(alice, "friend?call", %{"to" => "offline_bob", "call_id" => "call_2"})
+    ref =
+      push(alice, "sdp_offer", %{
+        "to_quicdial_id" => "offline_bob",
+        "sdp" => "REDACTED"
+      })
 
     assert_reply ref, :error, %{"reason" => "offline"}
 
     assert_push "peer_offline", %{
       "to" => "offline_bob",
       "reason" => "offline",
-      "trigger" => "friend_call",
       "sent_at" => sent_at
     }
 
     assert is_integer(sent_at)
   end
 
-  test "friend?call forwards when peer is online" do
-    {:ok, _bob} = connect_and_join("online_bob", "dual")
-    {:ok, alice} = connect_and_join("alice_online_call", "dual")
+  test "sdp_offer accepts to as alias for to_quicdial_id" do
+    {:ok, _bob} = connect_and_join("bob_alias", "bob-dev-1")
+    {:ok, alice} = connect_and_join("alice_alias", "alice-dev-1")
 
-    ref = push(alice, "friend?call", %{"to" => "online_bob", "call_id" => "call_3"})
+    ref = push(alice, "sdp_offer", %{"to" => "bob_alias", "sdp" => "REDACTED"})
+
+    assert_reply ref, :ok, %{"delivered" => true}
+    assert_broadcast "sdp_offer", %{"to_quicdial_id" => "bob_alias", "from_quicdial_id" => "alice_alias"}
+  end
+
+  test "sdp_answer routes to caller and broadcasts call_resolved" do
+    {:ok, bob} = connect_and_join("bob_answer", "bob-dev-1")
+    {:ok, alice} = connect_and_join("alice_answer", "alice-dev-1")
+
+    # Alice offers to Bob
+    push(alice, "sdp_offer", %{
+      "to_quicdial_id" => "bob_answer",
+      "sdp" => "OFFER_SDP"
+    })
+
+    assert_broadcast "sdp_offer", _payload
+
+    # Bob answers
+    ref =
+      push(bob, "sdp_answer", %{
+        "to_quicdial_id" => "alice_answer",
+        "to_device_uuid" => "alice-dev-1",
+        "sdp" => "ANSWER_SDP"
+      })
 
     assert_reply ref, :ok, %{"delivered" => true}
 
-    assert_broadcast "friend?call", %{
-      "to" => "online_bob",
-      "from" => "alice_online_call",
-      "call_id" => "call_3",
+    # Alice receives the answer
+    assert_broadcast "sdp_answer", %{
+      "from_quicdial_id" => "bob_answer",
+      "target_device_uuid" => "alice-dev-1",
+      "sdp" => "ANSWER_SDP"
+    }
+
+    # call_resolved is broadcast to Bob's topic (other devices)
+    assert_broadcast "call_resolved", %{
+      "answered_by_device_uuid" => "bob-dev-1",
+      "to_quicdial_id" => "alice_answer"
+    }
+  end
+
+  test "ice_candidate routes to target device" do
+    {:ok, _bob} = connect_and_join("bob_ice", "bob-dev-1")
+    {:ok, alice} = connect_and_join("alice_ice", "alice-dev-1")
+
+    ref =
+      push(alice, "ice_candidate", %{
+        "to_quicdial_id" => "bob_ice",
+        "to_device_uuid" => "bob-dev-1",
+        "candidate" => "candidate:1"
+      })
+
+    assert_reply ref, :ok, %{"delivered" => true}
+
+    assert_broadcast "ice_candidate", %{
+      "to_quicdial_id" => "bob_ice",
+      "target_device_uuid" => "bob-dev-1",
+      "from_quicdial_id" => "alice_ice",
+      "candidate" => "candidate:1",
       "sent_at" => sent_at
     }
 
     assert is_integer(sent_at)
   end
 
-  test "malformed payload missing to returns missing_to" do
-    {:ok, alice} = connect_and_join("alice_bad_payload", "dual")
+  test "ice_candidate rejects missing to_device_uuid" do
+    {:ok, _bob} = connect_and_join("bob_ice_missing", "bob-dev-1")
+    {:ok, alice} = connect_and_join("alice_ice_missing", "alice-dev-1")
+
+    ref =
+      push(alice, "ice_candidate", %{
+        "to_quicdial_id" => "bob_ice_missing",
+        "candidate" => "candidate:1"
+      })
+
+    assert_reply ref, :error, %{"reason" => "missing_to_device_uuid"}
+  end
+
+  test "generate_pairing_token returns 6-digit token" do
+    {:ok, alice} = connect_and_join("alice_pair", "alice-dev-1")
+
+    ref = push(alice, "generate_pairing_token", %{})
+
+    assert_reply ref, :ok, %{"token" => token, "expires_in_seconds" => 300}
+    assert is_binary(token)
+    assert String.length(token) == 6
+    assert String.match?(token, ~r/^\d{6}$/)
+  end
+
+  test "malformed sdp_offer missing to returns error" do
+    {:ok, alice} = connect_and_join("alice_bad", "alice-dev-1")
 
     ref = push(alice, "sdp_offer", %{"sdp" => "REDACTED"})
 
-    assert_reply ref, :error, %{"reason" => "missing_to"}
+    assert_reply ref, :error, payload
+    assert payload["reason"] in ["missing_to", "missing_to_quicdial_id"]
   end
 
-  test "resolve_quicdial returns target ip while target is connected" do
-    {:ok, _target} = connect_and_join("resolve_target", "dual", peer_ip: {10, 24, 8, 88})
-    {:ok, requester} = connect_and_join("resolve_requester", "dual", peer_ip: {127, 0, 0, 1})
-
-    ref = push(requester, "resolve_quicdial", %{"code" => "resolve_target"})
-
-    assert_reply ref, :ok, %{ip: "10.24.8.88"}
-  end
-
-  test "resolve_quicdial fast-fails when target is offline" do
-    {:ok, requester} = connect_and_join("resolve_requester_offline", "dual")
-
-    ref = push(requester, "resolve_quicdial", %{"code" => "resolve_missing"})
-
-    assert_reply ref, :error, %{"reason" => "offline"}
-  end
-
-  test "presence metadata is tracked on join and removed on disconnect" do
+  test "presence tracks device_uuid on join and clears on disconnect" do
     Process.flag(:trap_exit, true)
 
-    {:ok, channel_socket} = connect_and_join("presence_peer", "legacy")
+    {:ok, channel_socket} = connect_and_join("presence_peer", "presence-device-1")
 
-    presence = Presence.list("peer:presence_peer")
+    presence = Presence.list("user:presence_peer")
     assert map_size(presence) > 0
+    assert Map.has_key?(presence, "presence-device-1")
 
     metas =
       presence
@@ -168,17 +168,24 @@ defmodule OmiaiWeb.SignalingChannelTest do
       |> Enum.flat_map(&Map.get(&1, :metas, []))
 
     assert Enum.any?(metas, fn meta ->
-             Map.get(meta, :event_contract) == "legacy" and is_integer(Map.get(meta, :online_at)) and
-               is_binary(Map.get(meta, :node))
+             is_integer(Map.get(meta, :online_at)) and is_binary(Map.get(meta, :node))
            end)
 
     leave_ref = leave(channel_socket)
     assert_reply leave_ref, :ok
 
-    assert_presence_cleared("peer:presence_peer")
+    assert_presence_cleared("user:presence_peer")
   end
 
-  defp connect_and_join(public_key, contract, opts \\ []) do
+  test "invalid_event returns error" do
+    {:ok, alice} = connect_and_join("alice_invalid", "alice-dev-1")
+
+    ref = push(alice, "unknown_event", %{})
+
+    assert_reply ref, :error, %{"reason" => "invalid_event"}
+  end
+
+  defp connect_and_join(quicdial_id, device_uuid, opts \\ []) do
     peer_ip = Keyword.get(opts, :peer_ip, {127, 0, 0, 1})
     peer_port = Keyword.get(opts, :peer_port, 40_000)
     connect_info = %{peer_data: %{address: peer_ip, port: peer_port}}
@@ -186,12 +193,12 @@ defmodule OmiaiWeb.SignalingChannelTest do
     assert {:ok, socket} =
              connect(
                SankakuSocket,
-               %{"public_key" => public_key, "event_contract" => contract},
+               %{"quicdial_id" => quicdial_id, "device_uuid" => device_uuid},
                connect_info: connect_info
              )
 
     assert {:ok, _reply, channel_socket} =
-             subscribe_and_join(socket, SignalingChannel, "peer:" <> public_key)
+             subscribe_and_join(socket, SignalingChannel, "user:" <> quicdial_id)
 
     {:ok, channel_socket}
   end

@@ -1,7 +1,8 @@
 import Config
 
 config :omiai, OmiaiWeb.Endpoint,
-  http: [ip: {127, 0, 0, 1}, port: 4000],
+  # Bind on all interfaces so iOS/LAN devices can reach this node directly.
+  http: [ip: {0, 0, 0, 0}, port: 4000],
   check_origin: false,
   code_reloader: true,
   debug_errors: true,
@@ -9,6 +10,10 @@ config :omiai, OmiaiWeb.Endpoint,
   watchers: []
 
 config :omiai, dev_routes: true
+
+config :omiai, Omiai.Repo,
+  journal_mode: :wal,
+  cache_size: -64000
 
 config :logger, :default_formatter, format: "[$level] $message\n"
 

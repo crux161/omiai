@@ -37,13 +37,19 @@ defmodule Omiai.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.4"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:mdns_lite, "~> 0.8"},
+      {:ecto_sql, "~> 3.11"},
+      {:ecto_sqlite3, "~> 0.17"},
+      {:argon2_elixir, "~> 4.1"}
     ]
   end
 
   defp aliases do
     [
-      setup: ["deps.get"],
+      setup: ["deps.get", "ecto.setup"],
+      "ecto.setup": ["ecto.create", "ecto.migrate"],
+      "ecto.reset": ["ecto.drop", "ecto.setup"],
       precommit: ["compile --warnings-as-errors", "format", "test"]
     ]
   end
