@@ -90,6 +90,79 @@ defmodule OmiaiWeb.AuthController do
     })
   end
 
+  @doc """
+  Request a password reset token. For testing, the token is returned directly.
+  In production, this would send an email instead.
+  """
+  def request_password_reset(conn, %{"quicdial_id" => quicdial_id}) do
+    case Accounts.request_password_reset(quicdial_id) do
+      {:ok, token} ->
+        # In production, send email and don't return the token
+        json(conn, %{
+          message: "password_reset_requested",
+          reset_token: token
+        })
+
+      {:error, :not_found} ->
+        # Don't reveal whether the account exists — still return 200
+        json(conn, %{message: "password_reset_requested"})
+
+      {:error, _} ->
+        conn
+        |> put_status(:internal_server_error)
+        |> json(%{error: "reset_request_failed"})
+    end
+  end
+
+  def request_password_reset(conn, _params) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{error: "missing_fields", details: "quicdial_id required"})
+  end
+
+  @doc """
+  Reset the password using a valid reset token and new password.
+  """
+  def reset_password(conn, %{"token" => token, "password" => password}) do
+    case Accounts.reset_password(token, password) do
+      {:ok, user} ->
+        new_token = Accounts.generate_session_token(user)
+
+        json(conn, %{
+          message: "password_reset_success",
+          token: new_token,
+          user: %{
+            quicdial_id: user.quicdial_id,
+            display_name: user.display_name,
+            avatar_id: user.avatar_id
+          }
+        })
+
+      {:error, :invalid_token} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: "invalid_token"})
+
+      {:error, :token_expired} ->
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: "token_expired"})
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        errors = format_changeset_errors(changeset)
+
+        conn
+        |> put_status(:unprocessable_entity)
+        |> json(%{error: "reset_failed", details: errors})
+    end
+  end
+
+  def reset_password(conn, _params) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{error: "missing_fields", details: "token and password required"})
+  end
+
   defp format_changeset_errors(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
       Regex.replace(~r"%{(\w+)}", msg, fn _, key ->

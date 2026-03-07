@@ -447,6 +447,35 @@ defmodule OmiaiWeb.SignalingChannel do
   end
 
   # ---------------------------------------------------------------------------
+  # Chat / Typing / File-Offer Relay
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def handle_in("relay_message", payload, socket) when is_map(payload) do
+    %{quicdial_id: from_quicdial_id, device_uuid: from_device_uuid} = socket.assigns
+
+    with {:ok, to_quicdial_id} <- fetch_string(payload, "to_quicdial_id") do
+      outbound =
+        payload
+        |> Map.put("from_quicdial_id", from_quicdial_id)
+        |> Map.put("from_device_uuid", from_device_uuid)
+        |> Map.put("sent_at", System.system_time(:millisecond))
+
+      broadcast_to_peer(to_quicdial_id, "relay_message", outbound)
+
+      {:reply, {:ok, %{"delivered" => true}}, socket}
+    else
+      {:error, reason} ->
+        {:reply, {:error, %{"reason" => reason}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("relay_message", _payload, socket) do
+    {:reply, {:error, %{"reason" => "invalid_payload"}}, socket}
+  end
+
+  # ---------------------------------------------------------------------------
   # Fallback
   # ---------------------------------------------------------------------------
 

@@ -11,6 +11,8 @@ defmodule Omiai.Accounts.User do
     field :avatar_id, :string, default: "kyu-kun"
     field :password_hash, :string
     field :password, :string, virtual: true, redact: true
+    field :password_reset_token, :string
+    field :password_reset_expires_at, :utc_datetime
     timestamps(type: :utc_datetime)
   end
 
@@ -32,6 +34,23 @@ defmodule Omiai.Accounts.User do
     user
     |> cast(attrs, [:display_name, :avatar_id])
     |> validate_length(:display_name, min: 1, max: 100)
+  end
+
+  @doc "Changeset for setting a password reset token."
+  def password_reset_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:password_reset_token, :password_reset_expires_at])
+  end
+
+  @doc "Changeset for resetting the password with a new one."
+  def reset_password_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:password])
+    |> validate_required([:password])
+    |> validate_length(:password, min: 6, max: 128)
+    |> hash_password()
+    |> put_change(:password_reset_token, nil)
+    |> put_change(:password_reset_expires_at, nil)
   end
 
   defp hash_password(%{valid?: true, changes: %{password: password}} = changeset) do

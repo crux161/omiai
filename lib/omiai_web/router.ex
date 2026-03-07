@@ -15,6 +15,8 @@ defmodule OmiaiWeb.Router do
     # Public routes
     post "/auth/signup", AuthController, :signup
     post "/auth/login", AuthController, :login
+    post "/auth/request-password-reset", AuthController, :request_password_reset
+    post "/auth/reset-password", AuthController, :reset_password
   end
 
   scope "/api", OmiaiWeb do

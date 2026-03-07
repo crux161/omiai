@@ -124,6 +124,68 @@ defmodule Omiai.Accounts do
   end
 
   # ---------------------------------------------------------------------------
+  # Password Reset
+  # ---------------------------------------------------------------------------
+
+  @reset_token_ttl_minutes 30
+
+  @doc """
+  Request a password reset for a user identified by quicdial_id.
+  Returns `{:ok, token}` or `{:error, :not_found}`.
+  In production this would send an email; for now it returns the token directly.
+  """
+  def request_password_reset(quicdial_id) when is_binary(quicdial_id) do
+    case get_user_by_quicdial_id(quicdial_id) do
+      nil ->
+        {:error, :not_found}
+
+      user ->
+        token = generate_reset_token()
+        expires_at =
+          DateTime.utc_now()
+          |> DateTime.add(@reset_token_ttl_minutes * 60, :second)
+          |> DateTime.truncate(:second)
+
+        user
+        |> User.password_reset_changeset(%{
+          password_reset_token: token,
+          password_reset_expires_at: expires_at
+        })
+        |> Repo.update()
+        |> case do
+          {:ok, _user} -> {:ok, token}
+          {:error, changeset} -> {:error, changeset}
+        end
+    end
+  end
+
+  @doc """
+  Reset a user's password using a valid reset token.
+  Returns `{:ok, user}` or `{:error, reason}`.
+  """
+  def reset_password(token, new_password) when is_binary(token) and is_binary(new_password) do
+    case Repo.get_by(User, password_reset_token: token) do
+      nil ->
+        {:error, :invalid_token}
+
+      user ->
+        now = DateTime.utc_now()
+
+        if user.password_reset_expires_at && DateTime.compare(user.password_reset_expires_at, now) == :gt do
+          user
+          |> User.reset_password_changeset(%{password: new_password})
+          |> Repo.update()
+        else
+          {:error, :token_expired}
+        end
+    end
+  end
+
+  defp generate_reset_token do
+    :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
+  end
+
+  # ---------------------------------------------------------------------------
   # Friendships
   # ---------------------------------------------------------------------------
 
