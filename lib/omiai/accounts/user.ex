@@ -13,6 +13,7 @@ defmodule Omiai.Accounts.User do
     field :password, :string, virtual: true, redact: true
     field :password_reset_token, :string
     field :password_reset_expires_at, :utc_datetime
+    field :last_login_at, :utc_datetime
     timestamps(type: :utc_datetime)
   end
 
@@ -51,6 +52,12 @@ defmodule Omiai.Accounts.User do
     |> hash_password()
     |> put_change(:password_reset_token, nil)
     |> put_change(:password_reset_expires_at, nil)
+  end
+
+  @doc "Changeset for recording last login timestamp."
+  def last_login_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:last_login_at])
   end
 
   defp hash_password(%{valid?: true, changes: %{password: password}} = changeset) do

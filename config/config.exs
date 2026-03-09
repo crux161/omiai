@@ -15,7 +15,8 @@ config :omiai, OmiaiWeb.Endpoint,
     formats: [json: OmiaiWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: Omiai.PubSub
+  pubsub_server: Omiai.PubSub,
+  live_view: [signing_salt: "GJsTIy2oriARVAIE"]
 
 # ICE servers for WebRTC NAT traversal (used when deployed on Internet)
 config :omiai, :ice_servers, [

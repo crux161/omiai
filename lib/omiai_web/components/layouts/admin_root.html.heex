@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content={Phoenix.Controller.get_csrf_token()} />
+  <title>Omiai Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: #f5f5f5; color: #1a1a1a;
+    }
+    nav.admin-nav {
+      background: #1e293b; color: #fff;
+      padding: 0.75rem 1.5rem;
+      display: flex; align-items: center; gap: 1.5rem;
+    }
+    nav.admin-nav .brand { font-weight: 700; font-size: 1.1rem; }
+    nav.admin-nav a { color: #94a3b8; text-decoration: none; font-size: 0.9rem; }
+    nav.admin-nav a:hover { color: #fff; }
+    main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th { background: #f8fafc; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0; }
+    td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; }
+    tr:hover td { background: #f8fafc; }
+    .btn { display: inline-block; padding: 0.4rem 0.85rem; border-radius: 4px; font-size: 0.85rem; text-decoration: none; border: none; cursor: pointer; font-family: inherit; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: #ef4444; color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-secondary { background: #e2e8f0; color: #1e293b; }
+    .btn-secondary:hover { background: #cbd5e1; }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; font-weight: 600; color: #374151; }
+    .form-group input { width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
+    .form-group input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+    .form-card { background: #fff; border-radius: 6px; padding: 1.5rem; max-width: 480px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .flash { padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash-info { background: #dbeafe; color: #1e40af; }
+    .flash-error { background: #fee2e2; color: #991b1b; }
+    .field-error { color: #dc2626; font-size: 0.8rem; margin-top: 0.2rem; }
+    .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+    .page-header h1 { font-size: 1.4rem; margin: 0; }
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; font-size: 0.85rem; }
+    .text-muted { color: #64748b; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <nav class="admin-nav">
+    <span class="brand">Omiai Admin</span>
+    <a href="/admin/users">Users</a>
+    <a href="/admin/metrics">Metrics</a>
+  </nav>
+  <main>
+    <%= if info = Phoenix.Flash.get(@flash, :info) do %>
+      <div class="flash flash-info"><%= info %></div>
+    <% end %>
+    <%= if error = Phoenix.Flash.get(@flash, :error) do %>
+      <div class="flash flash-error"><%= error %></div>
+    <% end %>
+    {@inner_content}
+  </main>
+  <script src={OmiaiWeb.AdminAssets.js_path()}></script>
+</body>
+</html>

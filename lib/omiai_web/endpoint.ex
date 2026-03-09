@@ -6,6 +6,9 @@ defmodule OmiaiWeb.Endpoint do
       connect_info: [:peer_data, :uri, {:x_headers, ["user-agent"]}]
     ]
 
+  # LiveView socket used by Phoenix LiveDashboard
+  socket "/live", Phoenix.LiveView.Socket
+
   plug Plug.Static,
     at: "/",
     from: :omiai,

@@ -53,6 +53,7 @@ defmodule OmiaiWeb.AuthController do
   def login(conn, %{"quicdial_id" => quicdial_id, "password" => password}) do
     case Accounts.authenticate(quicdial_id, password) do
       {:ok, user} ->
+        Accounts.record_login(user)
         token = Accounts.generate_session_token(user)
 
         conn

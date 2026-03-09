@@ -113,6 +113,8 @@ defmodule Omiai.Accounts do
 
   def get_user!(id), do: Repo.get!(User, id)
 
+  def get_user(id), do: Repo.get(User, id)
+
   def get_user_by_quicdial_id(quicdial_id) when is_binary(quicdial_id) do
     Repo.get_by(User, quicdial_id: String.trim(quicdial_id))
   end
@@ -120,6 +122,37 @@ defmodule Omiai.Accounts do
   def update_profile(%User{} = user, attrs) do
     user
     |> User.profile_changeset(attrs)
+    |> Repo.update()
+  end
+
+  # ---------------------------------------------------------------------------
+  # Admin Functions
+  # ---------------------------------------------------------------------------
+
+  def list_users do
+    from(u in User, order_by: [desc: u.inserted_at])
+    |> Repo.all()
+  end
+
+  def admin_update_user(%User{} = user, attrs) do
+    user
+    |> User.profile_changeset(attrs)
+    |> Repo.update()
+  end
+
+  def admin_reset_password(%User{} = user, attrs) do
+    user
+    |> User.reset_password_changeset(attrs)
+    |> Repo.update()
+  end
+
+  def delete_user(%User{} = user) do
+    Repo.delete(user)
+  end
+
+  def record_login(%User{} = user) do
+    user
+    |> User.last_login_changeset(%{last_login_at: DateTime.utc_now() |> DateTime.truncate(:second)})
     |> Repo.update()
   end
 
