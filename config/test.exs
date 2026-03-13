@@ -7,8 +7,8 @@ config :omiai, OmiaiWeb.Endpoint,
   secret_key_base: "ZICQsIPLJv4ZmRm7OrFKPYa+0o1B+17C1qM7AhWsh6KXfkgC1Ob/9VVGWaYATuNR",
   server: false
 
-config :omiai, Omiai.Repo,
-  pool: Ecto.Adapters.SQL.Sandbox
+config :omiai, :jwt_secret, "test_jwt_secret"
+config :omiai, :internal_api_key, "test_internal_key"
 
 # Print only warnings and errors during test
 config :logger, level: :warning

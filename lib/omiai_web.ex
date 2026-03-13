@@ -45,14 +45,6 @@ defmodule OmiaiWeb do
     end
   end
 
-  def live_view do
-    quote do
-      use Phoenix.LiveView, layout: {OmiaiWeb.Layouts, :admin_root}
-
-      unquote(verified_routes())
-    end
-  end
-
   def html do
     quote do
       use Phoenix.Component

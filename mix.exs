@@ -33,7 +33,6 @@ defmodule Omiai.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.8.4"},
-      {:phoenix_ecto, "~> 4.6"},
       {:phoenix_html, "~> 4.0"},
       {:phoenix_pubsub, "~> 2.1"},
       {:phoenix_live_dashboard, "~> 0.8"},
@@ -42,17 +41,14 @@ defmodule Omiai.MixProject do
       {:jason, "~> 1.4"},
       {:bandit, "~> 1.5"},
       {:mdns_lite, "~> 0.8"},
-      {:ecto_sql, "~> 3.11"},
-      {:ecto_sqlite3, "~> 0.17"},
-      {:argon2_elixir, "~> 4.1"}
+      {:joken, "~> 2.6"},
+      {:req, "~> 0.5"}
     ]
   end
 
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup"],
-      "ecto.setup": ["ecto.create", "ecto.migrate"],
-      "ecto.reset": ["ecto.drop", "ecto.setup"],
+      setup: ["deps.get"],
       precommit: ["compile --warnings-as-errors", "format", "test"]
     ]
   end

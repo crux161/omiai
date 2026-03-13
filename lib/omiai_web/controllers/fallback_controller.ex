@@ -7,12 +7,9 @@ defmodule OmiaiWeb.FallbackController do
     |> json(%{error: "not_found"})
   end
 
-  def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
-    errors =
-      Ecto.Changeset.traverse_errors(changeset, fn {msg, _opts} -> msg end)
-
+  def call(conn, {:error, reason}) when is_binary(reason) do
     conn
     |> put_status(:unprocessable_entity)
-    |> json(%{error: "validation_failed", details: errors})
+    |> json(%{error: reason})
   end
 end

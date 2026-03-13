@@ -39,6 +39,8 @@ defmodule OmiaiWeb.SankakuSocket do
           |> assign(:peer_ip, ip)
           |> assign(:client_meta, client_meta)
           |> assign(:user_id, Map.get(claims, :user_id))
+          |> assign(:display_name, Map.get(claims, :display_name))
+          |> assign(:avatar_id, Map.get(claims, :avatar_id))
 
         {:ok, authed_socket}
 

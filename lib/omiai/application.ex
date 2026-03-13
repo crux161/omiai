@@ -7,7 +7,6 @@ defmodule Omiai.Application do
   def start(_type, _args) do
     children = [
       OmiaiWeb.Telemetry,
-      Omiai.Repo,
       {Phoenix.PubSub, name: Omiai.PubSub},
       OmiaiWeb.QuicdialRegistry,
       OmiaiWeb.PairingTokenCache,

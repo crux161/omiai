@@ -96,6 +96,37 @@ defmodule OmiaiWeb.SankakuSocketTest do
     assert socket.assigns.device_uuid == device_uuid
   end
 
+  test "connect accepts JWT auth tokens issued without iat" do
+    signer =
+      Joken.Signer.create(
+        "HS256",
+        Application.fetch_env!(:omiai, :jwt_secret)
+      )
+
+    claims = %{
+      "sub" => "1ef25b73-c468-48aa-bd91-79ad4a8b7803",
+      "quicdial_id" => "259-673-885",
+      "display_name" => "unix",
+      "avatar_id" => "kyu-kun",
+      "exp" => System.system_time(:second) + 3600
+    }
+
+    assert {:ok, token} = Joken.Signer.sign(claims, signer)
+
+    assert {:ok, socket} =
+             connect(
+               SankakuSocket,
+               %{"auth_token" => token, "device_uuid" => "7290310a-1e42-1533-ad7c-fc4fca72914a"},
+               connect_info: %{peer_data: %{address: {127, 0, 0, 1}, port: 45_012}}
+             )
+
+    assert socket.assigns.quicdial_id == "259-673-885"
+    assert socket.assigns.device_uuid == "7290310a-1e42-1533-ad7c-fc4fca72914a"
+    assert socket.assigns.user_id == "1ef25b73-c468-48aa-bd91-79ad4a8b7803"
+    assert socket.assigns.display_name == "unix"
+    assert socket.assigns.avatar_id == "kyu-kun"
+  end
+
   test "connect rejects invalid pairing_token" do
     assert :error =
              connect(

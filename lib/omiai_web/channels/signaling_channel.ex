@@ -16,7 +16,6 @@ defmodule OmiaiWeb.SignalingChannel do
 
   require Logger
 
-  alias Omiai.Accounts
   alias OmiaiWeb.Presence
   alias OmiaiWeb.PairingTokenCache
   alias OmiaiWeb.QuicdialRegistry
@@ -123,105 +122,14 @@ defmodule OmiaiWeb.SignalingChannel do
   end
 
   # ---------------------------------------------------------------------------
-  # Server-Mediated Friend Requests
+  # Friend Requests — proxied to external Python backend
   # ---------------------------------------------------------------------------
 
-  @impl true
-  def handle_in("friend_request", %{"to_quicdial_id" => to_quicdial_id}, socket) do
-    user_id = socket.assigns[:user_id]
-
-    if is_nil(user_id) do
-      {:reply, {:error, %{"reason" => "auth_required"}}, socket}
-    else
-      case Accounts.send_friend_request(user_id, to_quicdial_id) do
-        {:ok, friendship} ->
-          user = Accounts.get_user!(user_id)
-
-          broadcast_to_peer(to_quicdial_id, "friend_request_received", %{
-            "friendship_id" => friendship.id,
-            "from_quicdial_id" => user.quicdial_id,
-            "from_display_name" => user.display_name,
-            "from_avatar_id" => user.avatar_id
-          })
-
-          {:reply, {:ok, %{"friendship_id" => friendship.id}}, socket}
-
-        {:error, reason} ->
-          {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
-      end
-    end
-  end
+  @friend_events ~w(friend_request friend_accept friend_decline friend_remove)
 
   @impl true
-  def handle_in("friend_accept", %{"friendship_id" => friendship_id}, socket) do
-    user_id = socket.assigns[:user_id]
-
-    if is_nil(user_id) do
-      {:reply, {:error, %{"reason" => "auth_required"}}, socket}
-    else
-      case Accounts.accept_friend_request(friendship_id, user_id) do
-        {:ok, friendship} ->
-          user = Accounts.get_user!(user_id)
-          requester = Accounts.get_user!(friendship.requester_id)
-
-          broadcast_to_peer(requester.quicdial_id, "friend_accepted", %{
-            "friendship_id" => friendship.id,
-            "by_quicdial_id" => user.quicdial_id,
-            "by_display_name" => user.display_name,
-            "by_avatar_id" => user.avatar_id
-          })
-
-          {:reply, {:ok, %{"status" => "accepted"}}, socket}
-
-        {:error, reason} ->
-          {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
-      end
-    end
-  end
-
-  @impl true
-  def handle_in("friend_decline", %{"friendship_id" => friendship_id}, socket) do
-    user_id = socket.assigns[:user_id]
-
-    if is_nil(user_id) do
-      {:reply, {:error, %{"reason" => "auth_required"}}, socket}
-    else
-      case Accounts.decline_friend_request(friendship_id, user_id) do
-        {:ok, friendship} ->
-          requester = Accounts.get_user!(friendship.requester_id)
-
-          broadcast_to_peer(requester.quicdial_id, "friend_declined", %{
-            "friendship_id" => friendship.id,
-            "by_quicdial_id" => socket.assigns.quicdial_id
-          })
-
-          {:reply, {:ok, %{"status" => "declined"}}, socket}
-
-        {:error, reason} ->
-          {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
-      end
-    end
-  end
-
-  @impl true
-  def handle_in("friend_remove", %{"quicdial_id" => target_quicdial_id}, socket) do
-    user_id = socket.assigns[:user_id]
-
-    if is_nil(user_id) do
-      {:reply, {:error, %{"reason" => "auth_required"}}, socket}
-    else
-      case Accounts.remove_friendship(user_id, target_quicdial_id) do
-        :ok ->
-          broadcast_to_peer(target_quicdial_id, "friend_removed", %{
-            "by_quicdial_id" => socket.assigns.quicdial_id
-          })
-
-          {:reply, {:ok, %{"status" => "removed"}}, socket}
-
-        {:error, reason} ->
-          {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
-      end
-    end
+  def handle_in(event, payload, socket) when event in @friend_events do
+    proxy_to_backend(event, payload, socket)
   end
 
   # ---------------------------------------------------------------------------
@@ -491,6 +399,29 @@ defmodule OmiaiWeb.SignalingChannel do
   # ---------------------------------------------------------------------------
   # Private
   # ---------------------------------------------------------------------------
+
+  defp proxy_to_backend(event, payload, socket) do
+    %{user_id: user_id, quicdial_id: quicdial_id} = socket.assigns
+
+    if is_nil(user_id) do
+      {:reply, {:error, %{"reason" => "auth_required"}}, socket}
+    else
+      case Application.get_env(:omiai, :backend_url) do
+        nil ->
+          {:reply, {:error, %{"reason" => "backend_not_configured"}}, socket}
+
+        backend_url ->
+          Task.start(fn ->
+            Req.post("#{backend_url}/friends/#{event}",
+              json: Map.merge(payload, %{user_id: user_id, quicdial_id: quicdial_id}),
+              receive_timeout: 10_000
+            )
+          end)
+
+          {:reply, {:ok, %{"status" => "forwarded"}}, socket}
+      end
+    end
+  end
 
   # Broadcast to both user: and peer: topics so peers on either prefix receive the event
   defp broadcast_to_peer(quicdial_id, event, payload) do

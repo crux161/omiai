@@ -3,12 +3,12 @@ defmodule OmiaiWeb.Auth.SocketAuth do
   Authentication for multi-device WebRTC signaling connections.
 
   Supports (in priority order):
-  - Token auth: auth_token + device_uuid (logged-in user)
+  - JWT auth: auth_token (JWT) + device_uuid (externally authenticated user)
   - Pairing auth: pairing_token + device_uuid (QR code flow)
   - Direct auth: quicdial_id/public_key + device_uuid (LAN fallback)
   """
 
-  alias Omiai.Accounts
+  alias OmiaiWeb.Auth.JwtToken
   alias OmiaiWeb.PairingTokenCache
 
   @valid_quicdial_pattern ~r/^[A-Za-z0-9_:\-\.\/=+]{3,512}$/
@@ -22,15 +22,24 @@ defmodule OmiaiWeb.Auth.SocketAuth do
           | :invalid_pairing_token
           | :pairing_token_expired
           | :invalid_auth_token
+          | :jwt_secret_not_configured
 
   @spec authenticate(map(), map() | nil) ::
-          {:ok, %{quicdial_id: String.t(), device_uuid: String.t(), client_meta: map()}}
+          {:ok,
+           %{
+             quicdial_id: String.t(),
+             device_uuid: String.t(),
+             user_id: String.t() | nil,
+             display_name: String.t() | nil,
+             avatar_id: String.t() | nil,
+             client_meta: map()
+           }}
           | {:error, auth_reason()}
   def authenticate(params, connect_info) when is_map(params) do
     cond do
-      # Token flow: auth_token (logged-in user via Omiai account)
+      # JWT flow: auth_token is a JWT issued by the Python backend
       Map.has_key?(params, "auth_token") or Map.has_key?(params, :auth_token) ->
-        authenticate_token(params, connect_info)
+        authenticate_jwt(params, connect_info)
 
       # Pairing flow: pairing_token + device_uuid
       Map.has_key?(params, "pairing_token") or Map.has_key?(params, :pairing_token) ->
@@ -44,21 +53,22 @@ defmodule OmiaiWeb.Auth.SocketAuth do
 
   def authenticate(_params, _connect_info), do: {:error, :missing_quicdial_id}
 
-  defp authenticate_token(params, connect_info) do
+  defp authenticate_jwt(params, connect_info) do
     token = optional_string(params["auth_token"] || params[:auth_token])
 
-    case Accounts.verify_session_token(token || "") do
-      {:ok, %{user_id: user_id, quicdial_id: quicdial_id}} ->
+    case JwtToken.verify_token(token || "") do
+      {:ok, claims} ->
         {:ok, device_uuid} = fetch_device_uuid(params)
 
-        claims = %{
-          quicdial_id: quicdial_id,
-          device_uuid: device_uuid,
-          user_id: user_id,
-          client_meta: extract_client_meta(connect_info || %{})
-        }
-
-        {:ok, claims}
+        {:ok,
+         %{
+           quicdial_id: claims["quicdial_id"],
+           device_uuid: device_uuid,
+           user_id: claims["sub"],
+           display_name: claims["display_name"],
+           avatar_id: claims["avatar_id"],
+           client_meta: extract_client_meta(connect_info || %{})
+         }}
 
       {:error, _reason} ->
         {:error, :invalid_auth_token}
@@ -68,13 +78,15 @@ defmodule OmiaiWeb.Auth.SocketAuth do
   defp authenticate_direct(params, connect_info) do
     with {:ok, quicdial_id} <- fetch_quicdial_id(params),
          {:ok, device_uuid} <- fetch_device_uuid(params) do
-      claims = %{
-        quicdial_id: quicdial_id,
-        device_uuid: device_uuid,
-        client_meta: extract_client_meta(connect_info || %{})
-      }
-
-      {:ok, claims}
+      {:ok,
+       %{
+         quicdial_id: quicdial_id,
+         device_uuid: device_uuid,
+         user_id: nil,
+         display_name: nil,
+         avatar_id: nil,
+         client_meta: extract_client_meta(connect_info || %{})
+       }}
     end
   end
 
@@ -82,13 +94,15 @@ defmodule OmiaiWeb.Auth.SocketAuth do
     with {:ok, token} <- fetch_pairing_token(params),
          {:ok, device_uuid} <- fetch_device_uuid(params),
          {:ok, quicdial_id} <- PairingTokenCache.validate(token) do
-      claims = %{
-        quicdial_id: quicdial_id,
-        device_uuid: device_uuid,
-        client_meta: extract_client_meta(connect_info || %{})
-      }
-
-      {:ok, claims}
+      {:ok,
+       %{
+         quicdial_id: quicdial_id,
+         device_uuid: device_uuid,
+         user_id: nil,
+         display_name: nil,
+         avatar_id: nil,
+         client_meta: extract_client_meta(connect_info || %{})
+       }}
     else
       {:error, :invalid} -> {:error, :invalid_pairing_token}
       {:error, :expired} -> {:error, :pairing_token_expired}
@@ -115,8 +129,6 @@ defmodule OmiaiWeb.Auth.SocketAuth do
 
     cond do
       is_nil(value) or value == "" ->
-        # Auto-generate a stable device_uuid from the session when not provided
-        # (desktop clients may omit device_uuid)
         generate_device_uuid(params)
 
       Regex.match?(@valid_device_uuid_pattern, value) ->
@@ -128,8 +140,6 @@ defmodule OmiaiWeb.Auth.SocketAuth do
   end
 
   defp generate_device_uuid(params) do
-    # Derive a stable UUID from session_token if available, otherwise generate one.
-    # This ensures the same client session gets the same device_uuid across reconnects.
     seed =
       optional_string(params["session_token"] || params[:session_token]) ||
         optional_string(params["sig_nonce"] || params[:sig_nonce])
@@ -149,7 +159,10 @@ defmodule OmiaiWeb.Auth.SocketAuth do
     {:ok, uuid}
   end
 
-  defp format_as_uuid(<<a::binary-size(8), b::binary-size(4), c::binary-size(4), d::binary-size(4), e::binary-size(12)>>) do
+  defp format_as_uuid(
+         <<a::binary-size(8), b::binary-size(4), c::binary-size(4), d::binary-size(4),
+           e::binary-size(12)>>
+       ) do
     "#{a}-#{b}-#{c}-#{d}-#{e}"
   end
 

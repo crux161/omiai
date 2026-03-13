@@ -1,14 +1,14 @@
 defmodule OmiaiWeb.Plugs.AuthToken do
   @moduledoc """
-  Plug that extracts and verifies a Bearer token from the Authorization header.
-  On success, assigns `:current_user` to `conn.assigns`.
+  Plug that extracts and verifies a Bearer JWT from the Authorization header.
+  On success, assigns `:current_user_id` and `:current_quicdial_id` to `conn.assigns`.
   """
 
   @behaviour Plug
 
   import Plug.Conn
 
-  alias Omiai.Accounts
+  alias OmiaiWeb.Auth.JwtToken
 
   @impl true
   def init(opts), do: opts
@@ -16,9 +16,12 @@ defmodule OmiaiWeb.Plugs.AuthToken do
   @impl true
   def call(conn, _opts) do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, %{user_id: user_id}} <- Accounts.verify_session_token(token) do
-      user = Accounts.get_user!(user_id)
-      assign(conn, :current_user, user)
+         {:ok, claims} <- JwtToken.verify_token(token) do
+      conn
+      |> assign(:current_user_id, claims["sub"])
+      |> assign(:current_quicdial_id, claims["quicdial_id"])
+      |> assign(:current_display_name, claims["display_name"])
+      |> assign(:current_avatar_id, claims["avatar_id"])
     else
       _ ->
         conn

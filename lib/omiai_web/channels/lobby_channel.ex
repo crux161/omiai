@@ -1,18 +1,20 @@
 defmodule OmiaiWeb.LobbyChannel do
   @moduledoc """
-  Global peer discovery channel.
+  Global peer discovery and matchmaking proxy channel.
 
   All connected peers join "lobby:sankaku" and are tracked via Presence.
-  When a peer joins, all other peers receive a presence_diff showing the new
-  peer's quicdial_id, display_name, avatar_id, and IP — enabling automatic
-  peer list population dictated by the Omiai server.
+  User metadata (display_name, avatar_id) is sourced from JWT claims
+  carried in socket assigns — no database lookup required.
+
+  Matchmaking requests are proxied asynchronously to the external Python
+  backend via Req. The backend calls back via the internal webhook when
+  a match decision is made.
   """
 
   use OmiaiWeb, :channel
 
   require Logger
 
-  alias Omiai.Accounts
   alias OmiaiWeb.Presence
   alias OmiaiWeb.QuicdialRegistry
 
@@ -31,29 +33,24 @@ defmodule OmiaiWeb.LobbyChannel do
   def handle_info(:after_join, socket) do
     %{quicdial_id: quicdial_id, device_uuid: device_uuid, peer_ip: peer_ip} = socket.assigns
 
-    # Look up user from DB to get display_name and avatar_id
-    user_meta =
-      case Accounts.get_user_by_quicdial_id(quicdial_id) do
-        nil -> %{display_name: quicdial_id, avatar_id: "default"}
-        user -> %{display_name: user.display_name, avatar_id: user.avatar_id}
-      end
+    # User metadata comes from JWT claims in socket assigns — no DB lookup
+    display_name = socket.assigns[:display_name] || quicdial_id
+    avatar_id = socket.assigns[:avatar_id] || "default"
 
-    # Track this peer in lobby presence so all other peers see them
     {:ok, _} =
       Presence.track(socket, quicdial_id, %{
         device_uuid: device_uuid,
         ip: peer_ip,
-        display_name: user_meta.display_name,
-        avatar_id: user_meta.avatar_id,
+        display_name: display_name,
+        avatar_id: avatar_id,
         online_at: System.system_time(:second),
         node: Atom.to_string(node())
       })
 
-    # Push the full current peer list to the joining peer
     push(socket, "presence_state", Presence.list(socket))
 
     Logger.info(
-      "lobby_joined quicdial_id=#{quicdial_id} device_uuid=#{device_uuid} ip=#{peer_ip} display_name=#{user_meta.display_name}"
+      "lobby_joined quicdial_id=#{quicdial_id} device_uuid=#{device_uuid} ip=#{peer_ip} display_name=#{display_name}"
     )
 
     {:noreply, socket}
@@ -77,6 +74,31 @@ defmodule OmiaiWeb.LobbyChannel do
       end)
 
     {:reply, {:ok, %{"peers" => peers}}, socket}
+  end
+
+  @impl true
+  def handle_in("find_match", payload, socket) do
+    %{quicdial_id: quicdial_id, user_id: user_id} = socket.assigns
+
+    backend_url = Application.get_env(:omiai, :backend_url)
+
+    if backend_url do
+      # Fire-and-forget async POST to Python backend; reply immediately
+      Task.start(fn ->
+        Req.post("#{backend_url}/matchmaking/enqueue",
+          json: %{
+            user_id: user_id,
+            quicdial_id: quicdial_id,
+            payload: payload
+          },
+          receive_timeout: 10_000
+        )
+      end)
+
+      {:reply, {:ok, %{"status" => "queued"}}, socket}
+    else
+      {:reply, {:error, %{"reason" => "backend_not_configured"}}, socket}
+    end
   end
 
   @impl true

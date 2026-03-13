@@ -11,9 +11,14 @@ config :omiai, OmiaiWeb.Endpoint,
 
 config :omiai, dev_routes: true
 
-config :omiai, Omiai.Repo,
-  journal_mode: :wal,
-  cache_size: -64000
+# JWT shared secret for dev (Python backend must use the same key)
+config :omiai, :jwt_secret, "omiai_dev_jwt_secret_change_in_prod"
+
+# Internal API key for webhook auth from Python backend
+config :omiai, :internal_api_key, "omiai_dev_internal_key"
+
+# Python backend URL (set when the backend is running)
+ config :omiai, :backend_url, "http://localhost:8000"
 
 config :logger, :default_formatter, format: "[$level] $message\n"
 
